@@ -95,6 +95,9 @@ def test_a_return_is_not_mutated_into_itself():
     source = "void *f(void) { return NULL; }\nint g(void) { return 0x0; }\nint h(void) { return 1; }\n"
     returns = [site for site in discover_raw(source, "c", "x.c") if site.category == "return"]
     assert returns == []
+    nonzero = "int f(void) { return 0x0f; }\nfloat g(void) { return 0.5f; }\nint h(void) { return 0x0UL; }\n"
+    returns = [site.original for site in discover_raw(nonzero, "c", "x.c") if site.category == "return"]
+    assert returns == ["0x0f", "0.5f"]
 
 
 def test_c_only_rules_leave_the_other_languages_alone():

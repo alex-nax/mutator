@@ -12,7 +12,7 @@ A mutant is killed when the tests fail or time out. It survives when the tests s
 ./mutator
 ```
 
-The first run creates `.venv` and installs the tool. crapper has to be checked out next to this directory (`../crapper`), because that is where the namespace and function names come from. From a project root the tool walks the tree, skips `test`, `spec`, `vendor`, `node_modules`, and `target`, and writes `.metrics/mutate/<namespace>.edn`.
+The first run creates `.venv` and installs the tool. crapper has to be checked out next to this directory (`../crapper`), because that is where the namespace and function names come from. C and C++ need a crapper with C and C++ support. From a project root the tool walks the tree, skips `test`, `spec`, `vendor`, `node_modules`, and `target`, and writes `.metrics/mutate/<namespace>.edn`.
 
 The first run of a tree executes every covered mutant. Start with the file you are working on.
 
@@ -95,7 +95,7 @@ A form with a C or C++ mutant that did not compile also carries `:discarded`, an
 
 ## What each language mutates
 
-Tokens inside strings, comments, and quoted Clojure forms are left alone. In every language but C and C++, a replacement that does not compile fails the test run and counts as killed. A C or C++ replacement that does not compile is discarded and reported as `DISCARDED`.
+Tokens inside strings, comments, and quoted Clojure forms are left alone. In every language but C and C++, a replacement that does not compile fails the test run and counts as killed. A C or C++ replacement that does not compile under the generated CMake command is discarded and reported as `DISCARDED`; with `--test-command` it fails that command and counts as killed, as in every other language.
 
 | Language | Mutations |
 | --- | --- |

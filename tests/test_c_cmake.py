@@ -21,7 +21,10 @@ def _missing_tools() -> str | None:
     for tool in ("cmake", "ctest", "cc"):
         if shutil.which(tool) is None:
             return f"{tool} is not installed"
-    find_tool = ensure_crapper().cmake_coverage.find_tool
+    coverage = getattr(ensure_crapper(), "cmake_coverage", None)
+    if coverage is None:
+        return "the crapper next to mutator has no C/C++ support (its c-cpp branch)"
+    find_tool = coverage.find_tool
     if not (find_tool("llvm-cov", None) or find_tool("gcov", None)):
         return "neither llvm-cov nor gcov is installed, so there is no C coverage"
     return None

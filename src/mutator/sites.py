@@ -405,9 +405,12 @@ def _zero_like(node, text: str) -> bool:
         return True
     if node.type != "number_literal":
         return False
-    digits = text.lower().rstrip("ulf")
+    lowered = text.lower().replace("'", "")
     try:
-        return float.fromhex(digits) == 0 if digits.startswith("0x") else float(digits) == 0
+        if lowered.startswith("0x"):
+            # `f` is a hex digit, not a suffix: `0x0f` is fifteen.
+            return int(lowered.rstrip("ul"), 16) == 0
+        return float(lowered.rstrip("ulf")) == 0
     except ValueError:
         return False
 

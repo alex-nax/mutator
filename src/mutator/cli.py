@@ -596,4 +596,13 @@ def run(argv: list[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
-    sys.exit(run(argv))
+    try:
+        status = run(argv)
+    except RuntimeError as exc:
+        # crapper is imported lazily, so its error class is looked up, not imported.
+        treesitter = sys.modules.get("crapper.languages.treesitter")
+        if treesitter is None or not isinstance(exc, treesitter.GrammarUnavailable):
+            raise
+        print(f"mutator: {exc}", file=sys.stderr)
+        status = 1
+    sys.exit(status)

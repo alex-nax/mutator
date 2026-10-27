@@ -1,5 +1,7 @@
 # mutator
 
+> **Fork note (alex-nax/mutator, branch `c-cpp`).** Adds C and C++ support over upstream `unclebob/mutator`. The changes are one language module per tool plus tests and README text, kept small so they can be offered back as pull requests. Licence unchanged (0BSD).
+
 Mutation testing for Clojure, Java, Go, TypeScript, Rust, Python, C, and C++. One run detects the language of each source file, applies that language's mutation rules, and writes the snapshot [uml-viewer](https://github.com/unclebob/uml-viewer) already reads.
 
 Clojure follows [clj-mutate](https://github.com/unclebob/clj-mutate). Go follows [mutate4go](https://github.com/unclebob/mutate4go). Java follows [mutate4java](https://github.com/unclebob/mutate4java). TypeScript, Rust, Python, C, and C++ use the same decisions as Java, spelled in that language; C and C++ add the operators Java leaves out. Function names and namespaces come from [crapper](https://github.com/unclebob/crapper), which is what uml-viewer joins to `.metrics/crap.edn`.

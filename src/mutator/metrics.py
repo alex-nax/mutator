@@ -15,6 +15,9 @@ from mutator.functions import mutation_file, mutation_namespace
 from mutator.model import FormResult, History, PriorForm
 
 
+RECORDED = frozenset({"killed", "survived", "discarded"})
+
+
 def _relative(path: Path, root: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
 
@@ -64,7 +67,7 @@ def _outcomes_of(data: dict) -> dict[str, str]:
         if not isinstance(key, str):
             continue
         status = value[1:] if isinstance(value, str) and value.startswith(":") else value
-        if status in {"killed", "survived"}:
+        if status in RECORDED:
             found[key] = status
     return found
 
@@ -120,7 +123,7 @@ def load_history(root: Path, file_key: str) -> History:
 
 
 def _render_form(form: FormResult) -> dict:
-    return {
+    rendered = {
         "id": form.id,
         "kind": "defn-" if form.private else "defn",
         "file": form.file,
@@ -132,6 +135,9 @@ def _render_form(form: FormResult) -> dict:
         "uncovered": form.uncovered,
         "sites": form.sites,
     }
+    if form.discarded:
+        rendered["discarded"] = form.discarded
+    return rendered
 
 
 def _render_snapshot(namespace: str, source: str, forms: list[dict], outcomes: dict[str, str]) -> str:
@@ -173,7 +179,7 @@ def _file_outcomes(outcomes: dict[str, str], file_key: str) -> dict[str, str]:
     for mutation, status in outcomes.items():
         if mutation_file(mutation) != file_key:
             continue
-        if status not in {"killed", "survived"}:
+        if status not in RECORDED:
             continue
         found[mutation] = status
     return found

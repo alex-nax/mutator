@@ -46,6 +46,8 @@ class FormResult:
     survived: int = 0
     uncovered: int = 0
     sites: int = 0
+    # C/C++ mutants that did not build. They are neither killed nor survived.
+    discarded: int = 0
 
     @property
     def score(self) -> float | None:

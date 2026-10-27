@@ -8,17 +8,20 @@ the file's mutants finish.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
 
+from mutator.cmake_step import BUILD_FAILED
 from mutator.model import Site
-from mutator.runner import Command
+from mutator.runner import Command, display_command, is_cmake_step
 from mutator.sites import apply_site
 
 # Build output and the worker tree itself must not be shared. A link to
@@ -314,11 +317,45 @@ def _execute(
         return "survived"
     destination = directory / relative
     mutated = apply_site(original.decode("utf-8"), site.start, site.end, site.mutant)
+    if is_cmake_step(command):
+        wait_past_mtime(destination)
     destination.write_text(mutated, encoding="utf-8")
     try:
-        result = runner.run(command, mapped_cwd(directory, root, cwd), timeout)
+        timed, limit = _timed(command, timeout)
+        result = runner.run(timed, mapped_cwd(directory, root, cwd), limit)
     finally:
         destination.write_bytes(original)
+    return classify(command, result)
+
+
+def wait_past_mtime(path: Path) -> None:
+    """Sleep until the clock is a whole second past ``path``'s last write.
+
+    Make 3.81, which macOS ships, compares whole seconds. A mutant written in
+    the second its previous build finished looks no newer than the object
+    file, so the build is skipped and ctest runs the last binary. The file
+    is rewritten after every build (the restore, or the warm-up), so its
+    mtime is never older than that build.
+    """
+
+    remaining = math.floor(path.stat().st_mtime) + 1 - time.time()
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def _timed(command: Command, timeout: float) -> tuple[Command, float | None]:
+    """A C/C++ build is not timed. Only its ctest run is, inside the step."""
+
+    if is_cmake_step(command):
+        return [*command, "--test-timeout", f"{timeout:.3f}"], None
+    return command, timeout
+
+
+def classify(command: Command, result) -> str:
+    """Killed when the tests fail or time out. A C/C++ mutant that does not build is discarded."""
+
+    if is_cmake_step(command) and result.code == BUILD_FAILED and not result.timed_out:
+        return "discarded"
     if result.timed_out or result.code != 0:
         return "killed"
     return "survived"
@@ -418,17 +455,23 @@ def run_mutants(
     timeout: float,
     file_key: str,
     outcomes: dict[str, str],
-) -> None:
-    """Mutate ``sites`` in parallel overlays of ``root``. The source stays put."""
+) -> str | None:
+    """Mutate ``sites`` in parallel overlays of ``root``. The source stays put.
+
+    Returns a message when a worker could not be prepared; no mutant ran.
+    """
 
     if not sites:
-        return
+        return None
     base = new_run_dir(root)
     try:
         relative = source.resolve().relative_to(root.resolve()).as_posix()
         directories = create_workers(
             base, root, relative, original, worker_count(len(sites), max_workers)
         )
+        failure = warm_up(directories, root, relative, runner, command, cwd)
+        if failure is not None:
+            return failure
         _run_all(
             directories,
             sites,
@@ -444,3 +487,34 @@ def run_mutants(
         )
     finally:
         delete_tree(base)
+    return None
+
+
+def warm_up(
+    directories: list[Path], root: Path, relative: str, runner, command: Command, cwd: Path
+) -> str | None:
+    """Configure and build each C/C++ worker once, unmutated and untimed.
+
+    A cold build is not part of a mutant's cost. Without this, the first
+    mutant in each worker would pay for it against a timeout measured on a
+    warm tree. A worker that fails here is a broken overlay, not a mutant.
+    """
+
+    if not is_cmake_step(command):
+        return None
+    with ThreadPoolExecutor(max_workers=len(directories)) as pool:
+        results = list(
+            pool.map(lambda directory: runner.run(command, mapped_cwd(directory, root, cwd), None), directories)
+        )
+    for directory in directories:
+        # The mtime that wait_past_mtime reads must not be older than this build.
+        source = directory / relative
+        source.write_bytes(source.read_bytes())
+    for directory, result in zip(directories, results):
+        if result.code != 0:
+            tail = "\n".join(result.output.splitlines()[-20:])
+            return (
+                f"The unmutated build failed in worker {directory.name}: {display_command(command)}"
+                + (f"\n{tail}" if tail else "")
+            )
+    return None

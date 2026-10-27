@@ -54,10 +54,10 @@ def _skipped_directory_text() -> str:
 HELP = f"""\
 Usage: mutator [options] [path-or-filter ...]
 
-Discover mutation sites in Clojure, Java, Go, TypeScript, Rust, and Python,
-run the project's tests against each one, and write `.metrics/mutate` for
-uml-viewer. Namespaces and function names are the ones crapper writes into
-`.metrics/crap.edn`.
+Discover mutation sites in Clojure, Java, Go, TypeScript, Rust, Python, C,
+and C++, run the project's tests against each one, and write
+`.metrics/mutate` for uml-viewer. Namespaces and function names are the
+ones crapper writes into `.metrics/crap.edn`.
 
 A form id is `defn/<name>` or, for a private operation, `defn-/<name>`.
 uml-viewer joins that name to the operation and joins `:namespace` to the
@@ -113,13 +113,20 @@ whose text changed. Killed mutants in unchanged functions are kept.
 Selected mutants of one file run at the same time, one worker per core unless
 --max-workers says otherwise. A worker is a symlink overlay under
 target/mutation-workers with its own copy of the mutated file. The project
-tree is left unchanged. A copy left under target/mutator-backup/ by an
+tree is left unchanged.
+
+C and C++ use the nearest CMakeLists.txt that calls project(). Each worker
+configures and builds its own target/mutator-build once, unmutated and
+untimed, then each mutant is an incremental cmake --build plus ctest. Only
+ctest is timed. A mutant that does not compile is DISCARDED: it is neither
+killed nor survived and does not change the score or the exit code. A copy left under target/mutator-backup/ by an
 interrupted older run is restored before a non-scan run.
 
 Exit codes:
-  0  every executed mutant was killed, or there was nothing to run
+  0  every executed mutant was killed or discarded, or there was nothing to run
   1  usage error
-  2  baseline tests failed
+  2  baseline tests failed, or a C/C++ worker could not build the unmutated
+     project
   3  at least one mutant survived
 
 Coverage, when it is produced, uses the same commands as crapper:
@@ -129,6 +136,7 @@ Coverage, when it is produced, uses the same commands as crapper:
   TypeScript   npm run coverage, Vitest, or c8
   Rust         cargo llvm-cov or cargo tarpaulin
   Python       coverage.py LCOV
+  C, C++       a CMake build instrumented with llvm-cov or gcov, then ctest
 
 A site on a line the report does not mark as hit is uncovered and is not run.
 """

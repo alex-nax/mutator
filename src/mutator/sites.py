@@ -5,6 +5,12 @@ one-way `*` to `/`. Java follows mutate4java. TypeScript, Rust, and Python
 use the same decisions as Java, spelled in that language. TypeScript also
 mutates `??` to `||` and `?.` to `.` (removed on a call or index). JavaScript
 files use the TypeScript rules.
+
+C and C++ use the Java set plus `%` to `*`, the bitwise operators (`&`/`|`,
+`^` to `&`, `<<`/`>>`, delete `~`), `++`/`--`, and a returned expression
+replaced by `0`. Code is mutated as written: the condition of an `#if` or
+`#elif` and the body of a `#define` are never touched, but code inside an
+`#if` branch is.
 """
 
 from __future__ import annotations
@@ -40,6 +46,24 @@ _BINARY_PARENTS = {
 
 _UNARY_PARENTS = {"unary_expression", "unary_operator", "not_operator"}
 
+_C_LANGUAGES = {"c", "cpp"}
+
+# Mutated only in C and C++, so the other languages keep their own rule sets.
+_C_BINARY = {
+    "%": "*",
+    "&": "|",
+    "|": "&",
+    "^": "&",
+    "<<": ">>",
+    ">>": "<<",
+}
+
+_C_UPDATE = {"++": "--", "--": "++"}
+
+# A node under one of these is part of a directive, not code as written.
+_PREPROC_WHOLE = {"preproc_def", "preproc_function_def", "preproc_call", "preproc_include"}
+_PREPROC_CONDITIONS = {"preproc_if", "preproc_elif", "preproc_elifdef"}
+
 _BOOLEANS = {"true": "false", "false": "true", "True": "False", "False": "True"}
 
 _NUMBERS = {
@@ -49,6 +73,7 @@ _NUMBERS = {
     "integer",
     "number",
     "num_lit",
+    "number_literal",
 }
 
 _CLOJURE_HEAD = {
@@ -131,10 +156,14 @@ def _category(token: str) -> str:
         return "equality"
     if token in {"&&", "||", "??", "and", "or"}:
         return "logical"
+    if token in {"&", "|", "^", "<<", ">>"}:
+        return "bitwise"
     return "arithmetic"
 
 
 def _binary_mutant(language: str, token: str) -> str | None:
+    if language in _C_LANGUAGES and token in _C_BINARY:
+        return _C_BINARY[token]
     if language == "go" and token == "/":
         return None
     if token == "??" and language != "typescript":
@@ -175,6 +204,11 @@ def _add(found: list[RawSite], node, original: str, mutant: str, category: str) 
 
 
 def _is_statement(node_type: str) -> bool:
+    # A C block is not where its statements start; a C local is a `declaration`.
+    if node_type == "compound_statement":
+        return False
+    if node_type == "declaration":
+        return True
     return node_type.endswith("_statement") or node_type.endswith("_declaration")
 
 
@@ -203,6 +237,23 @@ def _in_type(node) -> bool:
     while current is not None:
         if current.type in _TYPE_NODES:
             return True
+        current = current.parent
+    return False
+
+
+def _in_directive(node) -> bool:
+    """True inside a `#define`, an `#include`, or an `#if` / `#elif` condition."""
+
+    child = node
+    current = node.parent
+    while current is not None:
+        if current.type in _PREPROC_WHOLE:
+            return True
+        if current.type in _PREPROC_CONDITIONS:
+            condition = current.child_by_field_name("condition")
+            if condition is not None and condition.id == child.id:
+                return True
+        child = current
         current = current.parent
     return False
 
@@ -323,6 +374,44 @@ def _visit_bool_lit(node, data: bytes, found: list[RawSite]) -> None:
         _add(found, node, text, _BOOLEANS[text], "boolean")
 
 
+def _visit_c_leaf(node, token: str, parent: str, language: str, found: list[RawSite]) -> None:
+    if language not in _C_LANGUAGES:
+        return
+    if parent == "update_expression" and token in _C_UPDATE:
+        _add(found, node, token, _C_UPDATE[token], "update")
+    elif parent == "unary_expression" and token == "~":
+        _add(found, node, token, "", "unary")
+
+
+def _visit_return(node, data: bytes, language: str, found: list[RawSite]) -> None:
+    """`return x;` becomes `return 0;`. A literal `0` becomes `1` through the constant rule."""
+
+    if language not in _C_LANGUAGES or node.type != "return_statement":
+        return
+    value = next((child for child in node.named_children if child.type != "comment"), None)
+    if value is None:
+        return
+    text = _text(data, value)
+    if _zero_like(value, text) or text in {"1", "true"}:
+        # `0` would be no change; `1` and `true` already flip through the constant rules.
+        return
+    _add(found, value, text, "0", "return")
+
+
+def _zero_like(node, text: str) -> bool:
+    """A value `0` would not change: zero, a null pointer, or `false`."""
+
+    if node.type in {"null", "nullptr", "false"} or text in {"NULL", "nullptr", "false"}:
+        return True
+    if node.type != "number_literal":
+        return False
+    digits = text.lower().rstrip("ulf")
+    try:
+        return float.fromhex(digits) == 0 if digits.startswith("0x") else float(digits) == 0
+    except ValueError:
+        return False
+
+
 def _visit_leaf(node, data: bytes, language: str, found: list[RawSite]) -> None:
     # A literal sits inside the same expression as an operator, so these
     # checks are independent. `0` is a child of `a > 0`, not an operator.
@@ -334,15 +423,19 @@ def _visit_leaf(node, data: bytes, language: str, found: list[RawSite]) -> None:
     _visit_negation(node, token, parent, found)
     _visit_boolean_token(node, token, found)
     _visit_constant(node, token, found)
+    _visit_c_leaf(node, token, parent, language, found)
 
 
 def _visit_node(node, data: bytes, language: str, found: list[RawSite]) -> None:
     if language == "typescript" and _in_type(node):
         return
+    if language in _C_LANGUAGES and _in_directive(node):
+        return
     if node.child_count == 0:
         _visit_leaf(node, data, language, found)
     else:
         _visit_bool_lit(node, data, found)
+        _visit_return(node, data, language, found)
 
 
 def _visit(node, data: bytes, language: str, found: list[RawSite]) -> None:

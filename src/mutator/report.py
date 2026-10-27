@@ -11,37 +11,45 @@ def _score(form: FormResult) -> str:
     return f"{form.score * 100:5.1f}%"
 
 
+def _row(name: str, namespace: str, counts: tuple[int, ...], score: str, widths, discards: bool) -> str:
+    name_width, namespace_width = widths
+    killed, survived, uncovered, discarded, sites = counts
+    middle = f"{killed:7d} {survived:9d} {uncovered:10d}"
+    if discards:
+        middle += f" {discarded:10d}"
+    return f"{name:<{name_width}} {namespace:<{namespace_width}} {middle} {sites:6d} {score}"
+
+
 def format_results(forms: list[FormResult]) -> str:
+    """The per-function table. A Discarded column appears only when a C/C++ mutant did not build."""
+
     if not forms:
         return "No functions to mutate.\n"
+    discards = any(form.discarded for form in forms)
     name_width = max(8, min(48, max(len(form.name) for form in forms)))
     namespace_width = max(9, min(72, max(len(form.namespace) for form in forms)))
+    widths = (name_width, namespace_width)
     header = (
         f"{'Function':<{name_width}} {'Namespace':<{namespace_width}} "
-        f"{'Killed':>7} {'Survived':>9} {'Uncovered':>10} {'Sites':>6} {'Score':>7}"
+        f"{'Killed':>7} {'Survived':>9} {'Uncovered':>10}"
+        + (f" {'Discarded':>10}" if discards else "")
+        + f" {'Sites':>6} {'Score':>7}"
     )
     ordered = sorted(
         forms,
         key=lambda form: (form.score is not None, form.score or 0, -form.survived, form.name),
     )
     lines = [header, "-" * len(header)]
-    killed = survived = uncovered = sites = 0
+    totals = [0, 0, 0, 0, 0]
     for form in ordered:
-        lines.append(
-            f"{form.name:<{name_width}} {form.namespace:<{namespace_width}} "
-            f"{form.killed:7d} {form.survived:9d} {form.uncovered:10d} {form.sites:6d} {_score(form)}"
-        )
-        killed += form.killed
-        survived += form.survived
-        uncovered += form.uncovered
-        sites += form.sites
+        counts = (form.killed, form.survived, form.uncovered, form.discarded, form.sites)
+        lines.append(_row(form.name, form.namespace, counts, _score(form), widths, discards))
+        totals = [total + count for total, count in zip(totals, counts)]
+    killed, survived = totals[0], totals[1]
     executed = killed + survived
     score = "n/a" if executed == 0 else f"{(killed / executed) * 100:.1f}%"
     lines.append("-" * len(header))
-    lines.append(
-        f"{'Total':<{name_width}} {'':<{namespace_width}} "
-        f"{killed:7d} {survived:9d} {uncovered:10d} {sites:6d} {score:>7}"
-    )
+    lines.append(_row("Total", "", tuple(totals), f"{score:>7}", widths, discards))
     lines.append("")
     return "\n".join(lines)
 

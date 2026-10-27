@@ -11,7 +11,18 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from mutator import cmake_step
+
 Command = str | list[str]
+
+# The C and C++ test command is this file run by this interpreter.
+CMAKE_STEP = str(Path(cmake_step.__file__).resolve())
+
+
+def is_cmake_step(command: Command) -> bool:
+    """True for the generated C/C++ command, never for a user's --test-command."""
+
+    return isinstance(command, list) and len(command) >= 2 and command[1] == CMAKE_STEP
 
 
 @dataclass(frozen=True)
@@ -222,6 +233,27 @@ def _python_plan(root: Path, source: Path) -> tuple[Command, Path]:
     return _python_command(directory), directory
 
 
+def _cmake_project(root: Path, source: Path) -> Path:
+    current = source.resolve().parent
+    stop = root.resolve()
+    while True:
+        if cmake_step.has_project(current):
+            return current
+        if current == stop or current.parent == current:
+            return root
+        current = current.parent
+
+
+def _cmake_plan(root: Path, source: Path) -> tuple[Command, Path]:
+    """Configure once, build, and run ctest, in the nearest CMake project.
+
+    The build directory is relative to the directory the command runs in, so
+    each worker overlay builds its own copy of the mutated file.
+    """
+
+    return [sys.executable, CMAKE_STEP], _cmake_project(root, source)
+
+
 _PLANS = {
     "clojure": _clojure_plan,
     "java": _java_plan,
@@ -229,6 +261,8 @@ _PLANS = {
     "typescript": _typescript_plan,
     "rust": _rust_plan,
     "python": _python_plan,
+    "c": _cmake_plan,
+    "cpp": _cmake_plan,
 }
 
 

@@ -62,6 +62,9 @@ def is_private(language: str, name: str, source: str, start: int, end: int) -> b
         return re.match(r"pub\s", header) is None
     if language == "typescript":
         return _typescript_private(name, header)
+    if language == "c":
+        # A static C function has internal linkage. C++ access is not in the header text.
+        return re.match(r"(?:inline\s+)?static\b", header) is not None
     return False
 
 
@@ -110,9 +113,25 @@ def project_functions(source: str, path: Path, root: Path):
     return crapper.languages.functions_in_file(
         language,
         source,
-        path.resolve().as_posix(),
+        _reader_path(language, path, root),
         root.resolve().as_posix(),
     )
+
+
+def _reader_path(language: str, path: Path, root: Path) -> str:
+    """crapper names a C or C++ file's namespace after the path it is given.
+
+    crapper passes the project-relative path, so mutator does too, and the
+    namespace matches `.metrics/crap.edn`. The other readers resolve it.
+    """
+
+    absolute = path.resolve()
+    if language in {"c", "cpp"}:
+        try:
+            return absolute.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return absolute.as_posix()
+    return absolute.as_posix()
 
 
 def _contains(fn, line: int, byte: int | None) -> bool:

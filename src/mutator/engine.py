@@ -58,6 +58,10 @@ def _covered(site: Site, lines: set[int] | None, ignore_coverage: bool) -> bool:
     return site.line in lines or site.anchor_line in lines
 
 
+# Outcomes an unchanged function keeps without a rerun.
+SETTLED = frozenset({"killed", "discarded"})
+
+
 def _select(
     sites: list[Site],
     covered: dict[str, bool],
@@ -78,7 +82,7 @@ def _select(
         if mutate_all or not unchanged:
             chosen.append(site)
             continue
-        if history.outcomes.get(site.mutation_id) == "killed":
+        if history.outcomes.get(site.mutation_id) in SETTLED:
             continue
         chosen.append(site)
     return chosen
@@ -117,7 +121,7 @@ def _forms(
     for key, (start, end, name, private) in sorted(spans.items(), key=lambda item: item[1][0]):
         namespace, form = key
         owned = grouped.get(key, [])
-        killed = survived = uncovered = 0
+        killed = survived = uncovered = discarded = 0
         for site in owned:
             if not covered[site.mutation_id]:
                 uncovered += 1
@@ -125,6 +129,8 @@ def _forms(
             status = outcomes.get(site.mutation_id)
             if status == "killed":
                 killed += 1
+            elif status == "discarded":
+                discarded += 1
             elif status == "survived":
                 survived += 1
             elif lines is None:
@@ -142,6 +148,7 @@ def _forms(
                 killed=killed,
                 survived=survived,
                 uncovered=uncovered,
+                discarded=discarded,
                 sites=len(owned),
             )
         )
@@ -229,7 +236,7 @@ def _apply_selected(
     if not ok:
         return _baseline_failure(file_key, command, tail)
     timeout = max(2.0, seconds * timeout_factor)
-    run_mutants(
+    failure = run_mutants(
         root,
         path,
         original,
@@ -242,6 +249,10 @@ def _apply_selected(
         file_key,
         outcomes,
     )
+    if failure is not None:
+        return RunResult(
+            path=file_key, forms=[], written=[], baseline_failed=True, baseline_message=failure
+        )
     return None
 
 
